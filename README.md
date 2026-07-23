@@ -40,3 +40,15 @@ HTTP/1.1 201 Created
 
 Visit `http://localhost:8000/docs` to see interactive API documentation. You can test all CRUD operations directly from the browser.
 
+### GET — List all tasks
+![GET /tasks](screenshots/swagger-get.png)
+
+### POST — Create a task
+![POST /tasks](screenshots/swagger-post.png)
+
+### PUT — Update a task
+![PUT /tasks/{id}](screenshots/swagger-put.png)
+
+### DELETE — Delete a task
+![DELETE /tasks/{id}](screenshots/swagger-delete.png)
+
