@@ -17,7 +17,7 @@ next_id = 4
 
 
 class TaskCreate(BaseModel):
-    title: str
+    title: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -55,8 +55,10 @@ def get_task(task_id: int):
 @app.post("/tasks", status_code=201, summary="Create a new task")
 def create_task(new_task: TaskCreate):
     """Add a task to the list. Title is required and cannot be empty."""
-    if not new_task.title or not new_task.title.strip():
-        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if new_task.title is None:
+        raise HTTPException(status_code=400, detail="Field 'title' is required")
+    if not new_task.title.strip():
+        raise HTTPException(status_code=400, detail="Field 'title' cannot be empty")
     global next_id
     task = {"id": next_id, "title": new_task.title.strip(), "done": False}
     tasks.append(task)
