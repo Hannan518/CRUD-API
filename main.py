@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -35,7 +36,13 @@ def get_db():
 
 def row_to_task(row):
     """Convert a database row into the API's JSON shape."""
-    return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def init_db():
@@ -46,18 +53,21 @@ def init_db():
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-            done INTEGER NOT NULL DEFAULT 0
+            done INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
         """
     )
     count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
     if count == 0:
+        now = datetime.now(timezone.utc).isoformat()
         conn.executemany(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            "INSERT INTO tasks (title, done, created_at, updated_at) VALUES (?, ?, ?, ?)",
             [
-                ("Buy groceries", 0),
-                ("Walk the dog", 1),
-                ("Read a book", 0),
+                ("Buy groceries", 0, now, now),
+                ("Walk the dog", 1, now, now),
+                ("Read a book", 0, now, now),
             ],
         )
     conn.commit()
@@ -89,10 +99,33 @@ def health():
 
 
 @app.get("/tasks", summary="List all tasks")
-def list_tasks(db: sqlite3.Connection = Depends(get_db)):
-    """Return every task from the database."""
-    rows = db.execute("SELECT * FROM tasks").fetchall()
+def list_tasks(
+    search: str | None = None,
+    done: bool | None = None,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Return tasks from the database, optionally filtered by search and/or done."""
+    query = "SELECT * FROM tasks"
+    conditions = []
+    params = []
+    if search is not None:
+        conditions.append("title LIKE ?")
+        params.append(f"%{search}%")
+    if done is not None:
+        conditions.append("done = ?")
+        params.append(int(done))
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    rows = db.execute(query, params).fetchall()
     return [row_to_task(row) for row in rows]
+
+
+@app.get("/stats", summary="Task statistics")
+def stats(db: sqlite3.Connection = Depends(get_db)):
+    """Return total, done and open task counts, computed in SQL."""
+    total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    done = db.execute("SELECT COUNT(*) FROM tasks WHERE done = 1").fetchone()[0]
+    return {"total": total, "done": done, "open": total - done}
 
 
 @app.get("/tasks/{task_id}", summary="Get a task by ID")
@@ -111,9 +144,10 @@ def create_task(new_task: TaskCreate, db: sqlite3.Connection = Depends(get_db)):
         raise TaskError(400, "Field 'title' is required")
     if not new_task.title.strip():
         raise TaskError(400, "Field 'title' cannot be empty")
+    now = datetime.now(timezone.utc).isoformat()
     cursor = db.execute(
-        "INSERT INTO tasks (title, done) VALUES (?, ?)",
-        (new_task.title.strip(), 0),
+        "INSERT INTO tasks (title, done, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (new_task.title.strip(), 0, now, now),
     )
     db.commit()
     row = db.execute(
@@ -139,9 +173,10 @@ def update_task(
     else:
         new_title = row["title"]
     new_done = bool(updated.done) if updated.done is not None else bool(row["done"])
+    now = datetime.now(timezone.utc).isoformat()
     db.execute(
-        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
-        (new_title, int(new_done), task_id),
+        "UPDATE tasks SET title = ?, done = ?, updated_at = ? WHERE id = ?",
+        (new_title, int(new_done), now, task_id),
     )
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()

@@ -26,7 +26,10 @@ The database file `tasks.db` is created automatically on first run — the `task
 | GET | `/` | API info | 200 |
 | GET | `/health` | Health check | 200 |
 | GET | `/tasks` | List all tasks | 200 |
+| GET | `/tasks?search=milk` | Search tasks by title (SQL `LIKE`) | 200 |
+| GET | `/tasks?done=true` | Filter by done status | 200 |
 | GET | `/tasks/{id}` | Get a task by ID | 200, 404 |
+| GET | `/stats` | Task statistics (total / done / open) | 200 |
 | POST | `/tasks` | Create a new task | 201, 400 |
 | PUT | `/tasks/{id}` | Update a task | 200, 400, 404 |
 | DELETE | `/tasks/{id}` | Delete a task | 204, 404 |
@@ -75,3 +78,27 @@ Visit `http://localhost:8000/docs` to see interactive API documentation. You can
 
 ### DELETE — Delete a task
 ![DELETE /tasks/{id}](screenshots/swagger-delete.png)
+
+## Extras
+
+### Search & filter
+
+`GET /tasks` accepts query parameters and lets the database do the filtering with SQL clauses:
+
+```
+GET /tasks?search=milk     # WHERE title LIKE '%milk%'
+GET /tasks?done=true       # WHERE done = 1
+GET /tasks?search=a&done=false   # both filters combined
+```
+
+### Statistics
+
+`GET /stats` computes the counts in SQL instead of in Python:
+
+```
+{"total": 3, "done": 1, "open": 2}
+```
+
+### Timestamps
+
+Each task has `created_at` and `updated_at` columns (set on insert, `updated_at` refreshed on every update). Adding those columns meant changing the table's shape — easy here because `tasks.db` is git-ignored and recreated on first run. In a real app with user data, changing a table's shape needs a written-down migration so existing rows aren't lost; that's what migrations are for.
