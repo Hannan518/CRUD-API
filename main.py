@@ -1,6 +1,6 @@
 import sqlite3
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -66,14 +66,6 @@ def init_db():
 
 init_db()
 
-tasks = [
-    {"id": 1, "title": "Buy groceries", "done": False},
-    {"id": 2, "title": "Walk the dog", "done": True},
-    {"id": 3, "title": "Read a book", "done": False},
-]
-
-next_id = 4
-
 
 class TaskCreate(BaseModel):
     title: str | None = None
@@ -131,28 +123,36 @@ def create_task(new_task: TaskCreate, db: sqlite3.Connection = Depends(get_db)):
 
 
 @app.put("/tasks/{task_id}", summary="Update a task")
-def update_task(task_id: int, updated: TaskUpdate):
+def update_task(
+    task_id: int, updated: TaskUpdate, db: sqlite3.Connection = Depends(get_db)
+):
     """Update a task title and/or done status. Returns 404 if not found."""
     if updated.title is None and updated.done is None:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    for task in tasks:
-        if task["id"] == task_id:
-            if updated.title is not None:
-                if not updated.title.strip():
-                    raise HTTPException(status_code=400, detail="Title cannot be empty")
-                task["title"] = updated.title.strip()
-            if updated.done is not None:
-                task["done"] = updated.done
-            return task
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        raise TaskError(400, "No fields to update")
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise TaskError(404, f"Task {task_id} not found")
+    if updated.title is not None:
+        if not updated.title.strip():
+            raise TaskError(400, "Title cannot be empty")
+        new_title = updated.title.strip()
+    else:
+        new_title = row["title"]
+    new_done = bool(updated.done) if updated.done is not None else bool(row["done"])
+    db.execute(
+        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        (new_title, int(new_done), task_id),
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return row_to_task(row)
 
 
 @app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
-def delete_task(task_id: int):
-    """Remove a task from the list. Returns 404 if not found."""
-    for i, task in enumerate(tasks):
-        if task["id"] == task_id:
-            tasks.pop(i)
-            return
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+def delete_task(task_id: int, db: sqlite3.Connection = Depends(get_db)):
+    """Remove a task from the database. Returns 404 if not found."""
+    cursor = db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    if cursor.rowcount == 0:
+        raise TaskError(404, f"Task {task_id} not found")
+    db.commit()
 
