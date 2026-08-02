@@ -36,6 +36,16 @@ HTTP/1.1 201 Created
 {"id":4,"title":"Buy milk","done":false}
 ```
 
+## Exploring the database
+
+I explored `tasks.db` by hand in DB Browser for SQLite. Example query I ran:
+
+```sql
+SELECT * FROM tasks WHERE done = 1;
+```
+
+It returned only the completed task: `Walk the dog`.
+
 ## Swagger UI
 
 Visit `http://localhost:8000/docs` to see interactive API documentation. You can test all CRUD operations directly from the browser.
