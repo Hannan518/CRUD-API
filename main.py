@@ -1,6 +1,7 @@
 import sqlite3
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 DB_PATH = "tasks.db"
@@ -10,6 +11,31 @@ app = FastAPI(
     version="1.0",
     description="A simple CRUD API for managing tasks.",
 )
+
+
+class TaskError(Exception):
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+
+
+@app.exception_handler(TaskError)
+def task_error_handler(request: Request, exc: TaskError):
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def row_to_task(row):
+    """Convert a database row into the API's JSON shape."""
+    return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
 
 
 def init_db():
@@ -71,18 +97,19 @@ def health():
 
 
 @app.get("/tasks", summary="List all tasks")
-def list_tasks():
-    """Return every task in the list."""
-    return tasks
+def list_tasks(db: sqlite3.Connection = Depends(get_db)):
+    """Return every task from the database."""
+    rows = db.execute("SELECT * FROM tasks").fetchall()
+    return [row_to_task(row) for row in rows]
 
 
 @app.get("/tasks/{task_id}", summary="Get a task by ID")
-def get_task(task_id: int):
+def get_task(task_id: int, db: sqlite3.Connection = Depends(get_db)):
     """Return a single task. Returns 404 if not found."""
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise TaskError(404, f"Task {task_id} not found")
+    return row_to_task(row)
 
 
 @app.post("/tasks", status_code=201, summary="Create a new task")
