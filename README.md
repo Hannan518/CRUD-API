@@ -1,8 +1,14 @@
 # Task API
 
-A simple CRUD API for managing a to-do list, built with Python and FastAPI.
+A CRUD API for managing a to-do list, built with Python and FastAPI, backed by a SQLite database. This is the Week 3 sequel to "Build your first CRUD API": the endpoints are identical to Assignment 1, but tasks now live in a real database instead of an in-memory list — so they survive a server restart.
+
+## Why SQLite?
+
+SQLite is a single-file database with zero setup: no server to install or run, and your whole database is one file (`tasks.db`). Because every task is written to disk, the data outlives the program — unlike the in-memory list from Assignment 1, which emptied on every restart.
 
 ## Install & Run
+
+Requirements: Python 3.10+ with FastAPI and Uvicorn.
 
 ```
 pip install fastapi uvicorn
@@ -10,6 +16,8 @@ python -m uvicorn main:app --reload
 ```
 
 Server runs at `http://localhost:8000`. Swagger UI is at `http://localhost:8000/docs`.
+
+The database file `tasks.db` is created automatically on first run — the `tasks` table and three example tasks are set up for you. No manual setup needed.
 
 ## Endpoints
 
@@ -36,15 +44,21 @@ HTTP/1.1 201 Created
 {"id":4,"title":"Buy milk","done":false}
 ```
 
-## Exploring the database
+## Storage
 
-I explored `tasks.db` by hand in DB Browser for SQLite. Example query I ran:
+Tasks are stored in `tasks.db` (SQLite), not in memory. Every query uses parameterized SQL (`?` placeholders), so user input is never glued into a query string. The API behaves exactly as before — identical curl tests still pass against the database version. That is the proof that storage is just an implementation detail: the API is the promise, and the database is where the promise is kept.
+
+### Exploring the database
+
+I opened `tasks.db` in DB Browser for SQLite and ran SQL by hand. Example query:
 
 ```sql
 SELECT * FROM tasks WHERE done = 1;
 ```
 
 It returned only the completed task: `Walk the dog`.
+
+![Database open in DB Browser](screenshots/db-project.png)
 
 ## Swagger UI
 
@@ -61,4 +75,3 @@ Visit `http://localhost:8000/docs` to see interactive API documentation. You can
 
 ### DELETE — Delete a task
 ![DELETE /tasks/{id}](screenshots/swagger-delete.png)
-
