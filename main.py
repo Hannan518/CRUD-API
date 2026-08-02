@@ -113,17 +113,21 @@ def get_task(task_id: int, db: sqlite3.Connection = Depends(get_db)):
 
 
 @app.post("/tasks", status_code=201, summary="Create a new task")
-def create_task(new_task: TaskCreate):
-    """Add a task to the list. Title is required and cannot be empty."""
+def create_task(new_task: TaskCreate, db: sqlite3.Connection = Depends(get_db)):
+    """Add a task to the database. Title is required and cannot be empty."""
     if new_task.title is None:
-        raise HTTPException(status_code=400, detail="Field 'title' is required")
+        raise TaskError(400, "Field 'title' is required")
     if not new_task.title.strip():
-        raise HTTPException(status_code=400, detail="Field 'title' cannot be empty")
-    global next_id
-    task = {"id": next_id, "title": new_task.title.strip(), "done": False}
-    tasks.append(task)
-    next_id += 1
-    return task
+        raise TaskError(400, "Field 'title' cannot be empty")
+    cursor = db.execute(
+        "INSERT INTO tasks (title, done) VALUES (?, ?)",
+        (new_task.title.strip(), 0),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return row_to_task(row)
 
 
 @app.put("/tasks/{task_id}", summary="Update a task")
