@@ -61,7 +61,7 @@ SELECT * FROM tasks WHERE done = 1;
 
 It returned only the completed task: `Walk the dog`.
 
-![Database open in DB Browser](screenshots/db-project.png)
+![Database open in DB Browser](screenshots/db-project.png?v=2)
 
 ## Swagger UI
 
