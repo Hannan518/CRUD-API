@@ -1,13 +1,8 @@
-import sqlite3
-from datetime import datetime, timezone
-
 import db
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
-DB_PATH = "tasks.db"
 
 app = FastAPI(
     title="Task API",
@@ -27,58 +22,8 @@ def task_error_handler(request: Request, exc: TaskError):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-def row_to_task(row):
-    """Convert a database row into the API's JSON shape."""
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "done": bool(row["done"]),
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
-
-
-def init_db():
-    """Create the database file and tasks table, seeding 3 tasks if empty."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            done INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    if count == 0:
-        now = datetime.now(timezone.utc).isoformat()
-        conn.executemany(
-            "INSERT INTO tasks (title, done, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            [
-                ("Buy groceries", 0, now, now),
-                ("Walk the dog", 1, now, now),
-                ("Read a book", 0, now, now),
-            ],
-        )
-    conn.commit()
-    conn.close()
-
-
 load_dotenv()
 db.init_db()
-init_db()
 
 
 class TaskCreate(BaseModel):
@@ -127,56 +72,32 @@ def get_task(task_id: int):
 
 
 @app.post("/tasks", status_code=201, summary="Create a new task")
-def create_task(new_task: TaskCreate, db: sqlite3.Connection = Depends(get_db)):
+def create_task(new_task: TaskCreate):
     """Add a task to the database. Title is required and cannot be empty."""
     if new_task.title is None:
         raise TaskError(400, "Field 'title' is required")
     if not new_task.title.strip():
         raise TaskError(400, "Field 'title' cannot be empty")
-    now = datetime.now(timezone.utc).isoformat()
-    cursor = db.execute(
-        "INSERT INTO tasks (title, done, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (new_task.title.strip(), 0, now, now),
-    )
-    db.commit()
-    row = db.execute(
-        "SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
-    return row_to_task(row)
+    return db.create_task(new_task.title.strip())
 
 
 @app.put("/tasks/{task_id}", summary="Update a task")
-def update_task(
-    task_id: int, updated: TaskUpdate, db: sqlite3.Connection = Depends(get_db)
-):
+def update_task(task_id: int, updated: TaskUpdate):
     """Update a task title and/or done status. Returns 404 if not found."""
     if updated.title is None and updated.done is None:
         raise TaskError(400, "No fields to update")
-    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = db.get_task(task_id)
     if row is None:
         raise TaskError(404, f"Task {task_id} not found")
-    if updated.title is not None:
-        if not updated.title.strip():
-            raise TaskError(400, "Title cannot be empty")
-        new_title = updated.title.strip()
-    else:
-        new_title = row["title"]
-    new_done = bool(updated.done) if updated.done is not None else bool(row["done"])
-    now = datetime.now(timezone.utc).isoformat()
-    db.execute(
-        "UPDATE tasks SET title = ?, done = ?, updated_at = ? WHERE id = ?",
-        (new_title, int(new_done), now, task_id),
-    )
-    db.commit()
-    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return row_to_task(row)
+    new_title = updated.title.strip() if updated.title is not None else row["title"]
+    if updated.title is not None and not new_title:
+        raise TaskError(400, "Title cannot be empty")
+    new_done = updated.done if updated.done is not None else row["done"]
+    return db.update_task(task_id, new_title, new_done)
 
 
 @app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
-def delete_task(task_id: int, db: sqlite3.Connection = Depends(get_db)):
+def delete_task(task_id: int):
     """Remove a task from the database. Returns 404 if not found."""
-    cursor = db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-    if cursor.rowcount == 0:
+    if db.delete_task(task_id) == 0:
         raise TaskError(404, f"Task {task_id} not found")
-    db.commit()
-

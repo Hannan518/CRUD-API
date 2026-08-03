@@ -72,3 +72,34 @@ def get_stats():
     done = conn.execute("SELECT COUNT(*) FROM tasks WHERE done = true").fetchone()["count"]
     conn.close()
     return {"total": total, "done": done, "open": total - done}
+
+
+def create_task(title):
+    """Insert a new task and return the stored row."""
+    conn = get_conn()
+    row = conn.execute(
+        "INSERT INTO tasks (title) VALUES (%s) RETURNING *",
+        (title,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def update_task(task_id, title, done):
+    """Update a task's title and/or done status, refreshing updated_at."""
+    conn = get_conn()
+    row = conn.execute(
+        "UPDATE tasks SET title = %s, done = %s, updated_at = now() WHERE id = %s RETURNING *",
+        (title, done, task_id),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def delete_task(task_id):
+    """Delete a task by id and return the number of deleted rows."""
+    conn = get_conn()
+    cursor = conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted
