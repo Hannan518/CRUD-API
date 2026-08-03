@@ -26,6 +26,11 @@ load_dotenv()
 db.init_db()
 
 
+@app.on_event("startup")
+def check_redis():
+    print(f"[startup] redis reachable: {db.ping_redis()}")
+
+
 class TaskCreate(BaseModel):
     title: str | None = None
 
@@ -43,8 +48,13 @@ def read_root():
 
 @app.get("/health", summary="Health check")
 def health():
-    """Check if the server is running."""
-    return {"status": "ok"}
+    """Check that the API is running and the database is reachable."""
+    try:
+        db.ping()
+        db_ok = "ok"
+    except Exception:
+        db_ok = "error"
+    return {"status": "ok", "db": db_ok}
 
 
 @app.get("/tasks", summary="List all tasks")

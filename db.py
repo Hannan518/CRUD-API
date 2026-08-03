@@ -3,6 +3,11 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 
+try:
+    import redis as redis_lib
+except ImportError:
+    redis_lib = None
+
 
 def get_conn():
     """Open a connection to Postgres using the DATABASE_URL environment variable."""
@@ -103,3 +108,23 @@ def delete_task(task_id):
     deleted = cursor.rowcount
     conn.close()
     return deleted
+
+
+def ping():
+    """Check the database is reachable with a trivial SELECT 1."""
+    conn = get_conn()
+    conn.execute("SELECT 1").fetchone()
+    conn.close()
+
+
+def ping_redis():
+    """Check Redis is reachable, returning True/False without raising."""
+    if redis_lib is None:
+        return False
+    try:
+        client = redis_lib.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        )
+        return bool(client.ping())
+    except Exception:
+        return False
