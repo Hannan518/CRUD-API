@@ -1,6 +1,8 @@
 import sqlite3
 from datetime import datetime, timezone
 
+import db
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -74,6 +76,8 @@ def init_db():
     conn.close()
 
 
+load_dotenv()
+db.init_db()
 init_db()
 
 
@@ -102,39 +106,24 @@ def health():
 def list_tasks(
     search: str | None = None,
     done: bool | None = None,
-    db: sqlite3.Connection = Depends(get_db),
 ):
     """Return tasks from the database, optionally filtered by search and/or done."""
-    query = "SELECT * FROM tasks"
-    conditions = []
-    params = []
-    if search is not None:
-        conditions.append("title LIKE ?")
-        params.append(f"%{search}%")
-    if done is not None:
-        conditions.append("done = ?")
-        params.append(int(done))
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    rows = db.execute(query, params).fetchall()
-    return [row_to_task(row) for row in rows]
+    return db.list_tasks(search=search, done=done)
 
 
 @app.get("/stats", summary="Task statistics")
-def stats(db: sqlite3.Connection = Depends(get_db)):
+def stats():
     """Return total, done and open task counts, computed in SQL."""
-    total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    done = db.execute("SELECT COUNT(*) FROM tasks WHERE done = 1").fetchone()[0]
-    return {"total": total, "done": done, "open": total - done}
+    return db.get_stats()
 
 
 @app.get("/tasks/{task_id}", summary="Get a task by ID")
-def get_task(task_id: int, db: sqlite3.Connection = Depends(get_db)):
+def get_task(task_id: int):
     """Return a single task. Returns 404 if not found."""
-    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = db.get_task(task_id)
     if row is None:
         raise TaskError(404, f"Task {task_id} not found")
-    return row_to_task(row)
+    return row
 
 
 @app.post("/tasks", status_code=201, summary="Create a new task")
