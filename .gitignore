@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+venv/
 test.json
 tasks.db
 
