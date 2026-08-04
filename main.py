@@ -1,7 +1,8 @@
+import auth
 import db
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from errors import TaskError, task_error_handler
+from fastapi import FastAPI
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -10,25 +11,16 @@ app = FastAPI(
     description="A simple CRUD API for managing tasks.",
 )
 
-
-class TaskError(Exception):
-    def __init__(self, status_code: int, message: str):
-        self.status_code = status_code
-        self.message = message
-
-
-@app.exception_handler(TaskError)
-def task_error_handler(request: Request, exc: TaskError):
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
-
+app.add_exception_handler(TaskError, task_error_handler)
 
 load_dotenv()
 db.init_db()
 
 
 @app.on_event("startup")
-def check_redis():
-    print(f"[startup] redis reachable: {db.ping_redis()}")
+def check_services():
+    print(f"[startup] redis reachable: {db.ping_redis()}", flush=True)
+    print(f"[startup] connected to Supabase: {auth.check_connection()}", flush=True)
 
 
 class TaskCreate(BaseModel):
