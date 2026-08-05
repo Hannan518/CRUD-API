@@ -1,6 +1,6 @@
 # Task API (Containerized)
 
-A CRUD API for managing a to-do list, built with Python and FastAPI, backed by **PostgreSQL running in Docker**. This is the third storage swap in the same repo: the endpoints are identical to Assignments 1 and 2, but tasks now live in a Postgres database, and the whole stack (API + Postgres + Redis) starts with one command.
+A CRUD API for managing a to-do list, built with Python and FastAPI, backed by **PostgreSQL running in Docker**. Assignment 4 adds **Supabase Auth**: sign up, log in, log out, and JWT-verified protected routes. The whole stack (API + Postgres + Redis) starts with one command.
 
 ## Why Postgres in Docker?
 
@@ -24,12 +24,16 @@ docker compose up --build
 
 That builds the API image, starts Postgres and Redis, creates the `tasks` table, and seeds three example tasks. The server is at `http://localhost:8000`; Swagger UI is at `http://localhost:8000/docs`.
 
-The compose stack supplies its own environment, so no `.env` file is needed inside Docker. A committed `.env.example` documents the same variables for running the API outside Docker:
+The compose stack supplies its own environment, but the Supabase keys are read from a local `.env` file next to `compose.yaml` (never committed — `.env` is git-ignored). A committed `.env.example` documents the same variables for running the API outside Docker:
 
 ```
 DATABASE_URL=postgres://postgres:dev@localhost:5432/tasks
 REDIS_URL=redis://localhost:6379/0
+SUPABASE_URL=your-project-ref.supabase.co
+SUPABASE_KEY=your-supabase-anon-public-key
 ```
+
+Before first run, copy `.env.example` to `.env` and fill in your Supabase **Project URL** and **anon public key** (Dashboard → Project Settings → API). Keep email confirmation off for instant signup (Dashboard → Authentication → Sign In / Providers → Email → Confirm email: OFF).
 
 ## Endpoints
 
@@ -45,6 +49,12 @@ REDIS_URL=redis://localhost:6379/0
 | POST | `/tasks` | Create a new task | 201, 400 |
 | PUT | `/tasks/{id}` | Update a task | 200, 400, 404 |
 | DELETE | `/tasks/{id}` | Delete a task | 204, 404 |
+| POST | `/auth/signup` | Register a new user | 201, 400 |
+| POST | `/auth/login` | Log in, receive `access_token` | 200, 401 |
+| POST | `/auth/logout` | Log out (Bearer token required) | 204, 401 |
+| GET | `/protected/profile` | Current user's profile (Bearer token required) | 200, 401 |
+| GET | `/protected/dashboard` | Protected greeting reusing the same guard (Bearer token required) | 200, 401 |
+| GET | `/public/info` | Public API info (no auth) | 200 |
 
 ## Example: List all tasks
 
@@ -63,6 +73,46 @@ content-type: application/json
 
 [{"id":1,"title":"Buy groceries","done":false,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"},{"id":2,"title":"Walk the dog","done":true,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"},{"id":3,"title":"Read a book","done":false,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"}]
 ```
+
+## Auth (Supabase)
+
+Signup, login and logout are delegated to **Supabase Auth**; protected routes verify the caller's JSON Web Token against Supabase before answering. On startup the API reports the connection: `[startup] connected to Supabase: True`.
+
+All auth code lives in one module, `auth.py`, behind a single `HTTPBearer` scheme. The shared `{"error": "..."}` response shape lives in `errors.py`. Missing body fields return `400`; a missing, malformed or expired Bearer token returns `401`.
+
+Sign up (201):
+
+```
+curl -i -X POST http://localhost:8000/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"supersecret123"}'
+```
+
+Log in (200, returns the `access_token`, the `refresh_token` and the user):
+
+```
+curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"supersecret123"}'
+```
+
+Use that token on a protected route (200 with the profile; 401 without a valid token):
+
+```
+curl -s http://localhost:8000/protected/profile \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Log out (204 — revokes the session with Supabase; the token must be valid):
+
+```
+curl -i -X POST http://localhost:8000/auth/logout \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Swagger UI at `http://localhost:8000/docs` shows every route; `/auth/logout`, `/protected/profile` and `/protected/dashboard` carry a lock and accept the token via the **Authorize** button:
+
+![Auth routes in Swagger UI](screenshots/swagger-auth.png)
 
 ## Storage
 
