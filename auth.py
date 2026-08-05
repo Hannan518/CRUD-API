@@ -1,8 +1,18 @@
 import os
 
 import httpx
+from errors import TaskError
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 _supabase = None
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class AuthRequest(BaseModel):
+    email: str | None = None
+    password: str | None = None
 
 
 def get_supabase():
@@ -27,3 +37,59 @@ def check_connection():
         return response.status_code == 200
     except Exception:
         return False
+
+
+def _check_credentials(credentials: AuthRequest):
+    """Return a 400 error unless both email and password are present."""
+    if not credentials.email or not credentials.password:
+        raise TaskError(400, "Field 'email' and 'password' are required")
+
+
+def _map_auth_error(exc: Exception, default_status: int, message: str | None = None):
+    """Raise a TaskError from a Supabase/Gotrue exception."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = default_status
+    detail = message or getattr(exc, "message", None) or str(exc)
+    raise TaskError(status, detail)
+
+
+def _user_payload(user) -> dict:
+    """Return the public user fields used in API responses."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": getattr(user, "created_at", None),
+    }
+
+
+@router.post("/signup", status_code=201, summary="Register a new user")
+def signup(credentials: AuthRequest):
+    """Create a new user with Supabase Auth. Returns 400 if fields are missing."""
+    _check_credentials(credentials)
+    try:
+        response = get_supabase().auth.sign_up(
+            {"email": credentials.email, "password": credentials.password}
+        )
+    except Exception as exc:
+        _map_auth_error(exc, 400)
+    return {"user": _user_payload(response.user)}
+
+
+@router.post("/login", summary="Log in and receive an access token")
+def login(credentials: AuthRequest):
+    """Log in with email and password. Returns 401 if the credentials are wrong."""
+    _check_credentials(credentials)
+    try:
+        response = get_supabase().auth.sign_in_with_password(
+            {"email": credentials.email, "password": credentials.password}
+        )
+    except Exception:
+        raise TaskError(401, "Invalid login credentials")
+    session = response.session
+    return {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+        "token_type": "bearer",
+        "user": _user_payload(response.user),
+    }
