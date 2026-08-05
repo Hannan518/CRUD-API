@@ -8,7 +8,7 @@ from pydantic import BaseModel
 app = FastAPI(
     title="Task API",
     version="1.0",
-    description="A simple CRUD API for managing tasks.",
+    description="A CRUD API for managing tasks with Supabase Auth (signup, login, logout, protected routes).",
 )
 
 app.add_exception_handler(TaskError, task_error_handler)
@@ -38,7 +38,7 @@ class TaskUpdate(BaseModel):
 @app.get("/", summary="API info")
 def read_root():
     """Return API name, version, and available endpoints."""
-    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
+    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks", "/auth/signup", "/auth/login", "/auth/logout", "/protected/profile", "/protected/dashboard", "/public/info"]}
 
 
 @app.get("/health", summary="Health check")

@@ -108,14 +108,34 @@ def login(credentials: AuthRequest):
     }
 
 
-@info_router.get("/protected/profile", summary="Get the current user's profile")
-def profile(credentials: HTTPAuthorizationCredentials = Depends(get_credentials)):
-    """Verify the Bearer token against Supabase, then return the user's profile."""
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(get_credentials)):
+    """Verify the Bearer token and return the authenticated user, else 401."""
     try:
         user = get_supabase().auth.get_user(credentials.credentials).user
     except Exception:
         raise TaskError(401, "Invalid or expired token")
+    return user
+
+
+@router.post("/logout", status_code=204, summary="Log out the current session")
+def logout(user=Depends(get_current_user)):
+    """Log out the verified session. Best-effort sign-out, returns 204."""
+    try:
+        get_supabase().auth.sign_out()
+    except Exception:
+        pass
+
+
+@info_router.get("/protected/profile", summary="Get the current user's profile")
+def profile(user=Depends(get_current_user)):
+    """Return id, email and created_at for the authenticated user."""
     return _user_payload(user)
+
+
+@info_router.get("/protected/dashboard", summary="Get a protected dashboard greeting")
+def dashboard(user=Depends(get_current_user)):
+    """Second protected route reusing the same guard - no new auth code."""
+    return {"message": f"Welcome, {user.email} - this is your dashboard."}
 
 
 @info_router.get("/public/info", summary="Public API info")
