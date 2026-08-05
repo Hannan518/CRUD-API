@@ -2,17 +2,30 @@ import os
 
 import httpx
 from errors import TaskError
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 _supabase = None
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+info_router = APIRouter(tags=["public"])
+
+security = HTTPBearer(auto_error=False)
 
 
 class AuthRequest(BaseModel):
     email: str | None = None
     password: str | None = None
+
+
+def get_credentials(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+):
+    """Return the Bearer credentials, raising 401 if the header is missing."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise TaskError(401, "Access token required")
+    return credentials
 
 
 def get_supabase():
@@ -93,3 +106,16 @@ def login(credentials: AuthRequest):
         "token_type": "bearer",
         "user": _user_payload(response.user),
     }
+
+
+@info_router.get("/protected/profile", summary="Get the current user's profile")
+def profile(credentials: HTTPAuthorizationCredentials = Depends(get_credentials)):
+    """Protected route: for now it only checks that a Bearer token is present.
+    Real token verification lands in Stage 3."""
+    return {"message": "Token accepted - verification lands in Stage 3"}
+
+
+@info_router.get("/public/info", summary="Public API info")
+def public_info():
+    """Return API information that does not require authentication."""
+    return {"message": "Welcome stranger! This info is public."}

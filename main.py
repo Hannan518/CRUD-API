@@ -14,6 +14,7 @@ app = FastAPI(
 app.add_exception_handler(TaskError, task_error_handler)
 
 app.include_router(auth.router)
+app.include_router(auth.info_router)
 
 load_dotenv()
 db.init_db()
