@@ -110,9 +110,12 @@ def login(credentials: AuthRequest):
 
 @info_router.get("/protected/profile", summary="Get the current user's profile")
 def profile(credentials: HTTPAuthorizationCredentials = Depends(get_credentials)):
-    """Protected route: for now it only checks that a Bearer token is present.
-    Real token verification lands in Stage 3."""
-    return {"message": "Token accepted - verification lands in Stage 3"}
+    """Verify the Bearer token against Supabase, then return the user's profile."""
+    try:
+        user = get_supabase().auth.get_user(credentials.credentials).user
+    except Exception:
+        raise TaskError(401, "Invalid or expired token")
+    return _user_payload(user)
 
 
 @info_router.get("/public/info", summary="Public API info")
