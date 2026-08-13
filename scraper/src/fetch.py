@@ -29,6 +29,19 @@ def _respect_delay():
     _last_request_at = time.time()
 
 
+def _decode(content: bytes) -> str:
+    """Decode a page, preferring UTF-8 but falling back to latin-1.
+
+    Books to Scrape sends no charset in its Content-Type, and different
+    responses have arrived as either UTF-8 or latin-1. UTF-8-first handles
+    both: a lone latin-1 byte raises UnicodeDecodeError and falls through.
+    """
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content.decode("latin-1", errors="replace")
+
+
 def polite_get(url: str) -> str:
     """One real HTTP GET: honest user-agent, timeout, status check, politeness delay."""
     global pages_fetched
@@ -41,7 +54,7 @@ def polite_get(url: str) -> str:
     )
     if response.status_code != 200:
         raise FetchError(f"{url} returned HTTP {response.status_code}")
-    return response.text
+    return _decode(response.content)
 
 
 def fetch_html(url: str, cache_path) -> tuple[str, bool]:

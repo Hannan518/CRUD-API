@@ -1,8 +1,9 @@
+import json
 import sys
 from urllib.parse import urljoin
 
 from . import config, fetch
-from .extract import parse_catalogue
+from .extract import extract_raw_record, parse_catalogue
 
 
 def discover() -> tuple[int, list[tuple[str, str]]]:
@@ -34,12 +35,17 @@ def discover() -> tuple[int, list[tuple[str, str]]]:
 
 def main():
     catalogue_pages, pages = discover()
-    print(
-        f"catalogue_pages={catalogue_pages}  discovered={len(pages)}  unique_urls={len(pages)}",
-        flush=True,
-    )
-    for product_url, _source_page in pages:
-        print(product_url, flush=True)
+    raw_records = []
+
+    for index, (product_url, source_page) in enumerate(pages, start=1):
+        cache_path = fetch.detail_cache_path(product_url)
+        html, _from_cache = fetch.fetch_html(product_url, cache_path)
+        raw_records.append(extract_raw_record(html, product_url, source_page))
+        if index % 10 == 0:
+            print(f"detail_pages={index}", flush=True)
+
+    print(json.dumps(raw_records[0], indent=2, ensure_ascii=False), flush=True)
+    print(f"detail_pages={len(raw_records)}", flush=True)
 
 
 if __name__ == "__main__":
