@@ -42,19 +42,34 @@ def _decode(content: bytes) -> str:
         return content.decode("latin-1", errors="replace")
 
 
-def polite_get(url: str) -> str:
-    """One real HTTP GET: honest user-agent, timeout, status check, politeness delay."""
+def polite_get(url: str, attempt: int = 1) -> str:
+    """One polite HTTP GET with a single retry on transient trouble.
+
+    Retries only timeouts, connection errors, and 5xx responses. A 404 (page
+    does not exist) or 403 (site refused) is never retried - asking again
+    would not help and would make a polite robot a pest.
+    """
     global pages_fetched
     _respect_delay()
     pages_fetched += 1
-    response = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT},
-        timeout=TIMEOUT_SECONDS,
-    )
-    if response.status_code != 200:
-        raise FetchError(f"{url} returned HTTP {response.status_code}")
-    return _decode(response.content)
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT},
+            timeout=TIMEOUT_SECONDS,
+        )
+    except (requests.Timeout, requests.ConnectionError):
+        if attempt >= 2:
+            raise FetchError(f"{url} unreachable after retry") from None
+        time.sleep(1.0)
+        return polite_get(url, attempt + 1)
+
+    if response.status_code == 200:
+        return _decode(response.content)
+    if response.status_code >= 500 and attempt < 2:
+        time.sleep(1.0)
+        return polite_get(url, attempt + 1)
+    raise FetchError(f"{url} returned HTTP {response.status_code}")
 
 
 def fetch_html(url: str, cache_path) -> tuple[str, bool]:
