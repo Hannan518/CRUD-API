@@ -2,7 +2,7 @@ import json
 import sys
 from urllib.parse import urljoin
 
-from . import config, fetch
+from . import config, fetch, normalize, validate
 from .extract import extract_raw_record, parse_catalogue
 
 
@@ -35,17 +35,34 @@ def discover() -> tuple[int, list[tuple[str, str]]]:
 
 def main():
     catalogue_pages, pages = discover()
-    raw_records = []
+    valid_records = []
+    errors = []
 
     for index, (product_url, source_page) in enumerate(pages, start=1):
         cache_path = fetch.detail_cache_path(product_url)
         html, _from_cache = fetch.fetch_html(product_url, cache_path)
-        raw_records.append(extract_raw_record(html, product_url, source_page))
+        raw = extract_raw_record(html, product_url, source_page)
+        raw["price_gbp"] = normalize.price_to_float(raw["price_text"])
+        record, reason = validate.validate_record(raw)
+        if record is not None:
+            valid_records.append(record)
+        else:
+            errors.append({"url": product_url, "error": reason})
         if index % 10 == 0:
             print(f"detail_pages={index}", flush=True)
 
-    print(json.dumps(raw_records[0], indent=2, ensure_ascii=False), flush=True)
-    print(f"detail_pages={len(raw_records)}", flush=True)
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (config.OUTPUT_DIR / "books.json").write_text(
+        json.dumps(valid_records, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (config.OUTPUT_DIR / "errors.json").write_text(
+        json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    prices_numeric = all(isinstance(r["price_gbp"], (int, float)) for r in valid_records)
+    urls_https = all(str(r["product_url"]).startswith("https://") for r in valid_records)
+    print(f"catalogue_pages={catalogue_pages}  books={len(valid_records)}  errors={len(errors)}")
+    print(f"prices_numeric={prices_numeric}  urls_https={urls_https}", flush=True)
 
 
 if __name__ == "__main__":
