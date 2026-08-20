@@ -133,5 +133,14 @@ def enrich_book(req: llm.EnrichRequest):
     stub = os.environ.get("LLM_STUB", "0") == "1"
     if stub:
         return llm.STUB_RESPONSE.model_dump(mode="json")
-    result = llm.enrich_record(req)
-    return {"raw_text": result["raw_text"], "model": result["model"]}
+    try:
+        result = llm.enrich_record(req)
+    except ValueError as exc:
+        raise TaskError(422, str(exc))
+    resp = result["response"]
+    return {
+        "category": resp.category.value,
+        "summary": resp.summary,
+        "quality_flags": [f.value for f in resp.quality_flags],
+        "confidence": resp.confidence,
+    }
