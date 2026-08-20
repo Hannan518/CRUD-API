@@ -1,7 +1,9 @@
-"""LLM integration for POST /enrich — schemas, client, prompt, parse, repair, cost log."""
+"""LLM integration for POST /enrich — schemas, client, prompt, parse, repair, retry, cost log."""
 import json
 import os
+import random
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from enum import Enum
@@ -14,6 +16,7 @@ load_dotenv()
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 LOG_DIR = Path(__file__).parent / "logs"
+MAX_RETRIES = 2  # SDK default — we override explicitly
 
 
 # --------------- output schema (from JOB-CARD.md) ---------------
@@ -103,42 +106,93 @@ def _quarantine(raw_text: str, error: str, prompt_version: str, input_data: dict
         f.write(line + "\n")
 
 
+# --------------- cost logging ---------------
+
+def _log_cost(prompt_version: str, model: str, prompt_tokens: int,
+              completion_tokens: int, duration_ms: int, repair_count: int):
+    """Write one structured cost log line to stdout (Twelve-Factor style)."""
+    line = json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "prompt_version": prompt_version,
+        "model": model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "duration_ms": duration_ms,
+        "repair_count": repair_count,
+    }, ensure_ascii=False)
+    print(f"[cost] {line}", flush=True)
+
+
 # --------------- client ---------------
 
 def get_client():
-    """Create an OpenAI-compatible client pointing at the configured provider."""
+    """Create an OpenAI-compatible client with a 30s timeout (not the SDK default 10 min)."""
     from openai import OpenAI
     return OpenAI(
         base_url=os.environ["LLM_BASE_URL"],
         api_key=os.environ["LLM_API_KEY"],
         timeout=30.0,
+        max_retries=0,  # we handle retries ourselves
     )
 
 
-# --------------- single model call ---------------
+# --------------- retry logic ---------------
 
-def _call_model(client, system_prompt: str, user_content: str) -> tuple[str, dict]:
-    """Make one model call and return (raw_text, usage_info)."""
+_RETRYABLE = (429, 500, 502, 503, 504)
+
+
+def _is_retryable(exc) -> bool:
+    """True if the error is a timeout, connection error, or retryable status code."""
+    from openai import APITimeoutError, APIConnectionError, APIStatusError
+    if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return True
+    if isinstance(exc, APIStatusError) and exc.status_code in _RETRYABLE:
+        return True
+    return False
+
+
+def _call_model_with_retry(client, system_prompt: str, user_content: str) -> tuple[str, dict]:
+    """Call the model with exponential backoff + jitter on transient failures.
+
+    Retries: timeouts, 429, 5xx.
+    Never retries: 400, 401, 403.
+    """
     model = os.environ.get("LLM_MODEL", "openrouter/free")
-    start = time.monotonic()
-    res = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.2,
-    )
-    duration_ms = round((time.monotonic() - start) * 1000)
-    raw_text = res.choices[0].message.content or ""
-    usage = res.usage
-    info = {
-        "model": res.model,
-        "prompt_tokens": usage.prompt_tokens if usage else 0,
-        "completion_tokens": usage.completion_tokens if usage else 0,
-        "duration_ms": duration_ms,
-    }
-    return raw_text, info
+    last_exc = None
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            start = time.monotonic()
+            res = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.2,
+            )
+            duration_ms = round((time.monotonic() - start) * 1000)
+            raw_text = res.choices[0].message.content or ""
+            usage = res.usage
+            info = {
+                "model": res.model,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "duration_ms": duration_ms,
+            }
+            return raw_text, info
+
+        except Exception as exc:
+            last_exc = exc
+            if attempt < MAX_RETRIES and _is_retryable(exc):
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                print(f"[retry] attempt {attempt+1} failed ({type(exc).__name__}), "
+                      f"waiting {wait:.1f}s before retry", flush=True)
+                time.sleep(wait)
+                continue
+            raise
+
+    raise last_exc  # unreachable, but satisfies type checkers
 
 
 # --------------- enrich (with parse + repair + quarantine) ---------------
@@ -149,18 +203,24 @@ def enrich_record(req: EnrichRequest) -> dict:
     Returns a dict with the validated response and metadata.
     Raises ValueError if both attempts fail (caller returns 422).
     """
+    # --- kill switch ---
+    if os.environ.get("LLM_ENABLED", "true").lower() != "true":
+        raise ValueError("LLM is disabled (LLM_ENABLED=false)")
+
     system_prompt = load_prompt("v1")
     user_content = json.dumps(req.model_dump(mode="json"), ensure_ascii=False)
     client = get_client()
     prompt_version = "v1"
 
     # --- first attempt ---
-    raw_text, info = _call_model(client, system_prompt, user_content)
+    raw_text, info = _call_model_with_retry(client, system_prompt, user_content)
     parsed = _extract_json(raw_text)
 
     if parsed is not None:
         try:
             validated = EnrichResponse.model_validate(parsed)
+            _log_cost(prompt_version, info["model"], info["prompt_tokens"],
+                      info["completion_tokens"], info["duration_ms"], 0)
             return {"response": validated, **info, "repair_count": 0}
         except ValidationError as ve:
             first_error = str(ve)
@@ -173,14 +233,16 @@ def enrich_record(req: EnrichRequest) -> dict:
         f"Your answer was:\n{raw_text}\n\n"
         "Return ONLY corrected JSON matching the schema. No explanation, no markdown fence."
     )
-    raw_text2, info2 = _call_model(client, system_prompt, repair_prompt)
-    info2["duration_ms"] = info["duration_ms"] + info2["duration_ms"]
+    raw_text2, info2 = _call_model_with_retry(client, system_prompt, repair_prompt)
+    total_duration = info["duration_ms"] + info2["duration_ms"]
     parsed2 = _extract_json(raw_text2)
 
     if parsed2 is not None:
         try:
             validated = EnrichResponse.model_validate(parsed2)
-            return {"response": validated, **info2, "repair_count": 1}
+            _log_cost(prompt_version, info2["model"], info2["prompt_tokens"],
+                      info2["completion_tokens"], total_duration, 1)
+            return {"response": validated, **info2, "duration_ms": total_duration, "repair_count": 1}
         except ValidationError as ve2:
             second_error = str(ve2)
     else:

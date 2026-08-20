@@ -136,6 +136,12 @@ def enrich_book(req: llm.EnrichRequest):
     try:
         result = llm.enrich_record(req)
     except ValueError as exc:
+        if "LLM is disabled" in str(exc):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=503,
+                content={"error": "LLM service is disabled", "detail": str(exc)},
+            )
         raise TaskError(422, str(exc))
     resp = result["response"]
     return {
