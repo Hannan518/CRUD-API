@@ -133,4 +133,5 @@ def enrich_book(req: llm.EnrichRequest):
     stub = os.environ.get("LLM_STUB", "0") == "1"
     if stub:
         return llm.STUB_RESPONSE.model_dump(mode="json")
-    return llm.enrich_record(req).model_dump(mode="json")
+    result = llm.enrich_record(req)
+    return {"raw_text": result["raw_text"], "model": result["model"]}

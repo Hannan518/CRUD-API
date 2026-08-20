@@ -1,13 +1,16 @@
-"""LLM integration for POST /enrich — schemas, client, stub, cost log."""
+"""LLM integration for POST /enrich — schemas, client, prompt, cost log."""
 import json
 import os
 import time
 from enum import Enum
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 load_dotenv()
+
+PROMPT_DIR = Path(__file__).parent / "prompts"
 
 
 # --------------- output schema (from JOB-CARD.md) ---------------
@@ -48,7 +51,7 @@ class EnrichRequest(BaseModel):
     availability_text: str = Field(..., min_length=1, max_length=200)
 
 
-# --------------- stub (Stage 1) ---------------
+# --------------- stub ---------------
 
 STUB_RESPONSE = EnrichResponse(
     category=Category.other,
@@ -56,6 +59,14 @@ STUB_RESPONSE = EnrichResponse(
     quality_flags=[QualityFlag.unclear_category],
     confidence=0.0,
 )
+
+
+# --------------- prompt loading ---------------
+
+def load_prompt(version: str = "v1") -> str:
+    """Load the prompt file for the given version."""
+    path = PROMPT_DIR / f"enrich-{version}.md"
+    return path.read_text(encoding="utf-8")
 
 
 # --------------- client ---------------
@@ -70,8 +81,31 @@ def get_client():
     )
 
 
-# --------------- enrich (stub for now, real call in Stage 2) ---------------
+# --------------- enrich (real model call, raw text) ---------------
 
-def enrich_record(req: EnrichRequest) -> EnrichResponse:
-    """Enrich a book record. Returns stub in Stage 1."""
-    return STUB_RESPONSE
+def enrich_record(req: EnrichRequest) -> dict:
+    """Call the model and return the raw response text along with metadata."""
+    system_prompt = load_prompt("v1")
+    user_content = json.dumps(req.model_dump(mode="json"), ensure_ascii=False)
+
+    start = time.monotonic()
+    client = get_client()
+    res = client.chat.completions.create(
+        model=os.environ.get("LLM_MODEL", "openrouter/free"),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.2,
+    )
+    duration_ms = round((time.monotonic() - start) * 1000)
+    raw_text = res.choices[0].message.content or ""
+    usage = res.usage
+
+    return {
+        "raw_text": raw_text,
+        "model": res.model,
+        "prompt_tokens": usage.prompt_tokens if usage else 0,
+        "completion_tokens": usage.completion_tokens if usage else 0,
+        "duration_ms": duration_ms,
+    }
