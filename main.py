@@ -1,8 +1,12 @@
+import os
+
 import auth
 import db
+import llm
 from dotenv import load_dotenv
 from errors import TaskError, task_error_handler
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -12,6 +16,18 @@ app = FastAPI(
 )
 
 app.add_exception_handler(TaskError, task_error_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request, exc):
+    """Return 400 (not 422) for input validation failures, naming the field."""
+    from fastapi.responses import JSONResponse
+
+    errors = []
+    for err in exc.errors():
+        field = ".".join(str(loc) for loc in err.get("loc", []))
+        errors.append({"field": field, "error": err.get("msg", "invalid")})
+    return JSONResponse(status_code=400, content={"error": "Invalid input", "details": errors})
 
 app.include_router(auth.router)
 app.include_router(auth.info_router)
@@ -38,7 +54,7 @@ class TaskUpdate(BaseModel):
 @app.get("/", summary="API info")
 def read_root():
     """Return API name, version, and available endpoints."""
-    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks", "/auth/signup", "/auth/login", "/auth/logout", "/protected/profile", "/protected/dashboard", "/public/info"]}
+    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks", "/auth/signup", "/auth/login", "/auth/logout", "/protected/profile", "/protected/dashboard", "/public/info", "/enrich"]}
 
 
 @app.get("/health", summary="Health check")
@@ -106,3 +122,15 @@ def delete_task(task_id: int):
     """Remove a task from the database. Returns 404 if not found."""
     if db.delete_task(task_id) == 0:
         raise TaskError(404, f"Task {task_id} not found")
+
+
+@app.post("/enrich", summary="Enrich a book record with LLM")
+def enrich_book(req: llm.EnrichRequest):
+    """Enrich a scraped book record with a category, summary, quality flags, and confidence.
+
+    With LLM_STUB=1 returns a hard-coded stub. Invalid input returns 400.
+    """
+    stub = os.environ.get("LLM_STUB", "0") == "1"
+    if stub:
+        return llm.STUB_RESPONSE.model_dump(mode="json")
+    return llm.enrich_record(req).model_dump(mode="json")
