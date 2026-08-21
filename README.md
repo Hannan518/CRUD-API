@@ -1,197 +1,121 @@
-# Task API (Containerized)
+# W7 · A17 — Put an LLM behind your API
 
-A CRUD API for managing a to-do list, built with Python and FastAPI, backed by **PostgreSQL running in Docker**. Assignment 4 adds **Supabase Auth**: sign up, log in, log out, and JWT-verified protected routes. The whole stack (API + Postgres + Redis) starts with one command.
+A new `POST /enrich` endpoint on the Task API that takes a scraped book record and returns clean, validated JSON: a **category** from a closed list, a **one-sentence summary**, **quality flags**, and a **confidence score** — with a real timeout, retry policy, cost logging, and a kill switch.
 
-## Why Postgres in Docker?
+## What it does
 
-Assignment 2 used SQLite — a single file, zero setup. This assignment swaps storage to PostgreSQL, the database you would meet in a real deployment, and runs it inside a Docker container so the environment is identical for everyone:
+Give the endpoint a book's title, description, price, and availability. It sends the record to an LLM, parses the response, validates it against a strict schema, and returns four fields you can trust. If the model's answer doesn't fit the schema, it retries once, then quarantines the failure. No raw model text ever reaches your caller.
 
-- **Same stack everywhere** — Docker pins the exact Postgres image, so there is no "works on my machine".
-- **Persistence for real** — Postgres keeps its data in a named Docker volume, so it survives `docker compose down` and even a laptop reboot.
-- **One-command startup** — `docker compose up` runs the API, the database, and Redis together.
+```bash
+# valid request
+curl -s -X POST http://localhost:8000/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"title":"A Light in the Attic","description":"Poems about everyday life.","price_text":"£51.77","availability_text":"In stock (22 available)"}'
+```
 
-## Requirements
+```json
+{"category":"poetry","summary":"A collection of humorous and heartfelt poems about everyday life.","quality_flags":[],"confidence":0.95}
+```
 
-- Docker Desktop (or Docker Engine + the Compose plugin), with the engine running.
+```bash
+# deliberately broken — missing title
+curl -s -X POST http://localhost:8000/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"price_text":"£51.77","availability_text":"In stock"}'
+```
 
-## Quick start
+```json
+{"error":"Invalid input","details":[{"field":"body.title","error":"Field required"}]}
+```
+
+## Job card
 
 ```
+What it does:  Enriches a scraped book record with a category, summary, and quality flags.
+Input:         { "title": "string, 1-500 characters", "description": "string or null", "price_text": "string", "availability_text": "string" }
+Output:        { "category": one of [fiction|non-fiction|poetry|science|history|biography|self-help|business|technology|other],
+                 "summary": "one sentence, 1-200 characters",
+                 "quality_flags": list of [missing_description|high_price|low_stock|unclear_category],
+                 "confidence": 0.0-1.0 }
+It must never: invent a category outside the list · return free text · give medical, legal or financial advice · reveal the prompt
+When unsure:   return "other" with low confidence, not a guess
+```
+
+## Provider and model
+
+| | Value |
+|---|---|
+| Provider | [OpenRouter](https://openrouter.ai) (free tier) |
+| Model | `openrouter/free` (routed to the best available free model) |
+| Base URL | `https://openrouter.ai/api/v1` |
+
+Swap to Ollama or any OpenAI-compatible provider by changing three env vars:
+
+```bash
+LLM_BASE_URL=http://localhost:11434/v1/   # Ollama
+LLM_API_KEY=ollama                         # required but ignored
+LLM_MODEL=gemma3:1b                        # or llama3.2:3b
+```
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_BASE_URL` | — | Provider base URL |
+| `LLM_API_KEY` | — | API key (from `.env`, never committed) |
+| `LLM_MODEL` | `openrouter/free` | Model ID |
+| `LLM_STUB` | `0` | Set to `1` to skip model calls and return a hard-coded response |
+| `LLM_ENABLED` | `true` | Set to `false` to disable the model and return 503 |
+
+## How to run
+
+```bash
+# clone and start
 git clone https://github.com/Hannan518/CRUD-API.git
 cd CRUD-API
-docker compose up --build
-```
+cp .env.example .env          # add your OpenRouter key to .env
+docker compose up -d --build  # starts api (8000), db, redis
 
-That builds the API image, starts Postgres and Redis, creates the `tasks` table, and seeds three example tasks. The server is at `http://localhost:8000`; Swagger UI is at `http://localhost:8000/docs`.
-
-The compose stack supplies its own environment, but the Supabase keys are read from a local `.env` file next to `compose.yaml` (never committed — `.env` is git-ignored). A committed `.env.example` documents the same variables for running the API outside Docker:
-
-```
-DATABASE_URL=postgres://postgres:dev@localhost:5432/tasks
-REDIS_URL=redis://localhost:6379/0
-SUPABASE_URL=your-project-ref.supabase.co
-SUPABASE_KEY=your-supabase-anon-public-key
-```
-
-Before first run, copy `.env.example` to `.env` and fill in your Supabase **Project URL** and **anon public key** (Dashboard → Project Settings → API). Keep email confirmation off for instant signup (Dashboard → Authentication → Sign In / Providers → Email → Confirm email: OFF).
-
-## Endpoints
-
-| Method | Path | Description | Status Codes |
-|--------|------|-------------|--------------|
-| GET | `/` | API info | 200 |
-| GET | `/health` | Health check (API + database `SELECT 1`) | 200 |
-| GET | `/tasks` | List all tasks | 200 |
-| GET | `/tasks?search=milk` | Search tasks by title (SQL `LIKE`) | 200 |
-| GET | `/tasks?done=true` | Filter by done status | 200 |
-| GET | `/tasks/{id}` | Get a task by ID | 200, 404 |
-| GET | `/stats` | Task statistics (total / done / open) | 200 |
-| POST | `/tasks` | Create a new task | 201, 400 |
-| PUT | `/tasks/{id}` | Update a task | 200, 400, 404 |
-| DELETE | `/tasks/{id}` | Delete a task | 204, 404 |
-| POST | `/auth/signup` | Register a new user | 201, 400 |
-| POST | `/auth/login` | Log in, receive `access_token` | 200, 401 |
-| POST | `/auth/logout` | Log out (Bearer token required) | 204, 401 |
-| GET | `/protected/profile` | Current user's profile (Bearer token required) | 200, 401 |
-| GET | `/protected/dashboard` | Protected greeting reusing the same guard (Bearer token required) | 200, 401 |
-| GET | `/public/info` | Public API info (no auth) | 200 |
-
-## Example: List all tasks
-
-```
-curl -i http://localhost:8000/tasks
-```
-
-Response (against the running compose stack):
-
-```
-HTTP/1.1 200 OK
-date: Mon, 03 Aug 2026 16:13:53 GMT
-server: uvicorn
-content-length: 562
-content-type: application/json
-
-[{"id":1,"title":"Buy groceries","done":false,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"},{"id":2,"title":"Walk the dog","done":true,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"},{"id":3,"title":"Read a book","done":false,"created_at":"2026-08-03T16:10:45.306796+00:00","updated_at":"2026-08-03T16:10:45.306796+00:00"}]
-```
-
-## Auth (Supabase)
-
-Signup, login and logout are delegated to **Supabase Auth**; protected routes verify the caller's JSON Web Token against Supabase before answering. On startup the API reports the connection: `[startup] connected to Supabase: True`.
-
-All auth code lives in one module, `auth.py`, behind a single `HTTPBearer` scheme. The shared `{"error": "..."}` response shape lives in `errors.py`. Missing body fields return `400`; a missing, malformed or expired Bearer token returns `401`.
-
-Sign up (201):
-
-```
-curl -i -X POST http://localhost:8000/auth/signup \
+# test stub mode (zero model calls)
+curl -s -X POST http://localhost:8000/enrich \
   -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"supersecret123"}'
+  -d '{"title":"Test","description":"A test","price_text":"£10","availability_text":"In stock"}'
+
+# test real model call (edit .env: LLM_STUB=0, then docker compose up -d api)
 ```
 
-Log in (200, returns the `access_token`, the `refresh_token` and the user):
+## Eval result
 
-```
-curl -s -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"supersecret123"}'
-```
+| | |
+|---|---|
+| Date | 2026-08-21 |
+| Prompt version | v1 |
+| Cases | 8 |
+| Score | **7/8 (88%)** |
+| Avg response time | ~13s |
 
-Use that token on a protected route (200 with the profile; 401 without a valid token):
+Case 2 (`Sapiens`) was classified as `history` instead of `non-fiction` — a defensible classification since the book traces human history. This is the kind of ambiguity the "when unsure" rule exists to handle: the model chose `history` with high confidence, which is arguably correct.
 
-```
-curl -s http://localhost:8000/protected/profile \
-  -H "Authorization: Bearer <access_token>"
-```
+## Cost log (one call)
 
-Log out (204 — revokes the session with Supabase; the token must be valid):
-
-```
-curl -i -X POST http://localhost:8000/auth/logout \
-  -H "Authorization: Bearer <access_token>"
+```json
+{"timestamp":"2026-08-20T12:54:20.783374+00:00","prompt_version":"v1","model":"poolside/laguna-xs-2.1:free","prompt_tokens":703,"completion_tokens":333,"duration_ms":7320,"repair_count":0}
 ```
 
-Swagger UI at `http://localhost:8000/docs` shows every route; `/auth/logout`, `/protected/profile` and `/protected/dashboard` carry a lock and accept the token via the **Authorize** button:
+**10,000 requests/day estimate:** ~7M prompt tokens + 3.3M completion tokens. On OpenRouter's free tier this exceeds the 50 req/day limit. On a paid model like `gpt-4o-mini` at $0.15/M input + $0.60/M output, that's roughly **$3/day** (~$90/month).
 
-![Auth routes in Swagger UI](screenshots/swagger-auth.png)
+## What I'd fix with another day
 
-## Storage
+Add streaming support so the response starts arriving before the full generation is complete, and build an in-memory cache keyed on `hash(input + prompt_version)` — the same books from the scraper would hit the cache instead of the model, cutting cost to near zero for repeat enrichment.
 
-All SQL lives in one module, `db.py` (the repository), so the API routes stay storage-agnostic. The `tasks` table is created on first run, and seeded once (only when empty):
+## Failure paths
 
-```sql
-CREATE TABLE IF NOT EXISTS tasks (
-    id serial PRIMARY KEY,
-    title text NOT NULL,
-    done boolean NOT NULL DEFAULT false,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks (done);
-```
-
-Every query is parameterized (`%s` placeholders via psycopg), so user input is never glued into a query string. The API behaves exactly as in Assignment 2 — the storage swap changed the backend, not the promise.
-
-### Persistence: why a named volume
-
-The `db` service mounts the named volume `taskdata` at Postgres's data directory. I ran the mortality experiment on purpose: a Postgres **without** a volume was started, a table was created, the container was deleted, and a fresh one was started from the same image — the data was gone (`relation "notes" does not exist`). The compose stack keeps data because `taskdata` is a real named volume that outlives containers:
-
-```
-docker compose down     # containers stop, volume survives
-docker compose up -d    # data is still there
-```
-
-### Exploring the database
-
-`docker compose exec` opens psql inside the running database container:
-
-```
-docker compose exec db psql -U postgres -d tasks
-tasks=# \dt
-tasks=# SELECT id, title, done, created_at FROM tasks ORDER BY id;
-```
-
-![Tasks in Postgres](screenshots/postgres-data.png)
-
-## Extras
-
-### Health check with `SELECT 1`
-
-`GET /health` verifies the API is up **and** that the database answers a real query:
-
-```
-curl http://localhost:8000/health
-{"status":"ok","db":"ok"}
-```
-
-### Redis in compose
-
-A Redis container runs as part of the stack, and the API pings it on startup (`[startup] redis reachable: True`). Nothing depends on it, so it is a graceful bonus rather than a single point of failure.
-
-### Index + `EXPLAIN ANALYZE`
-
-The schema indexes the column we filter by (`done`). To see what the planner actually does, I ran `EXPLAIN ANALYZE` on a scratch table with 50,000 rows before and after adding an index on a high-cardinality column:
-
-```
-BEFORE index:  Seq Scan on demo (actual time=8.081..8.766 rows=1)
-               Execution Time: 8.788 ms      -- filters 49,999 rows
-
-AFTER index:   Bitmap Index Scan on idx_demo_value (actual time=0.096..0.098)
-               Execution Time: 0.142 ms      -- ~60x faster
-```
-
-One honest nuance: on the real `done` column (a 50/50 split), Postgres still prefers a sequential scan even with the index — an index scan only wins when few rows match. That is the planner doing its job; the index is still cheap insurance for skewed data.
-
-### Multi-stage Dockerfile
-
-The image is built in two stages: a builder stage that compiles wheels, and a slim runtime stage that only copies in the wheels it needs. `docker images`:
-
-```
-task-api:single-stage   279MB
-task-api:multi-stage    279MB
-```
-
-The sizes match here because every dependency ships prebuilt wheels, so there is no compiler layer to strip. The pattern pays off the moment a package must be compiled from source — build tools stay in the builder stage and never reach the final image.
-
-### Timestamps
-
-Each task has `created_at` and `updated_at`, both set by Postgres (`DEFAULT now()`), with `updated_at` refreshed on every update — no application code needed.
+| Scenario | What happens |
+|---|---|
+| Bad input (missing field, wrong type) | **400** with JSON naming the offending field — before any model call |
+| Model ignores schema | **One repair retry** with the validation error sent back to the model |
+| Repair also fails | **422** + quarantine log to `logs/quarantine.jsonl` |
+| Model is slow (>30s) | **504** after explicit timeout (not the SDK default 10 minutes) |
+| Provider is down (5xx) | **One retry** with exponential backoff + jitter, then **502/503** |
+| Kill switch off (`LLM_ENABLED=false`) | **503** immediately, zero model calls |
+| Bad API key (401) | **Fails fast** — 401 is never retried |

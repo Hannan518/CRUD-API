@@ -1,0 +1,90 @@
+[
+  {
+    "id": 1,
+    "input": {
+      "title": "Harry Potter and the Philosopher's Stone",
+      "description": "A young wizard begins his education at Hogwarts School of Witchcraft and Wizardry.",
+      "price_text": "£12.99",
+      "availability_text": "In stock (50 available)"
+    },
+    "expected_category": "fiction",
+    "note": "Clear fiction — well-known fantasy novel"
+  },
+  {
+    "id": 2,
+    "input": {
+      "title": "Sapiens: A Brief History of Humankind",
+      "description": "How Homo sapiens came to dominate the Earth through cognitive, agricultural, and scientific revolutions.",
+      "price_text": "£14.99",
+      "availability_text": "In stock (30 available)"
+    },
+    "expected_category": "non-fiction",
+    "note": "Clear non-fiction — popular science/history"
+  },
+  {
+    "id": 3,
+    "input": {
+      "title": "Leaves of Grass",
+      "description": "A collection of poetry celebrating the American experience, nature, and the human body.",
+      "price_text": "£8.99",
+      "availability_text": "In stock (15 available)"
+    },
+    "expected_category": "poetry",
+    "note": "Clear poetry — Walt Whitman's classic"
+  },
+  {
+    "id": 4,
+    "input": {
+      "title": "Clean Code: A Handbook of Agile Software Craftsmanship",
+      "description": "A handbook of agile software craftsmanship covering writing clean, readable, and maintainable code.",
+      "price_text": "£35.00",
+      "availability_text": "In stock (20 available)"
+    },
+    "expected_category": "technology",
+    "note": "Clear technology — software engineering book"
+  },
+  {
+    "id": 5,
+    "input": {
+      "title": "Guns, Germs, and Steel",
+      "description": "Why certain civilizations developed differently, exploring geography, agriculture, and technology.",
+      "price_text": "£11.99",
+      "availability_text": "In stock (25 available)"
+    },
+    "expected_category": "history",
+    "note": "Clear history — Jared Diamond's thesis"
+  },
+  {
+    "id": 6,
+    "input": {
+      "title": "The Alchemist",
+      "description": "A shepherd boy travels from Spain to Egypt in search of treasure, learning lessons along the way.",
+      "price_text": "£9.99",
+      "availability_text": "In stock (40 available)"
+    },
+    "expected_category": "fiction",
+    "note": "Ambiguous — could be fiction or self-help. Fiction is the more accurate classification since it is a narrative novel."
+  },
+  {
+    "id": 7,
+    "input": {
+      "title": "Quantum Entanglement for Beginners",
+      "description": null,
+      "price_text": "£19.99",
+      "availability_text": "In stock (8 available)"
+    },
+    "expected_category": "other",
+    "note": "When unsure — no description, title suggests science but certainty is low. Should return other with low confidence."
+  },
+  {
+    "id": 8,
+    "input": {
+      "title": "Atomic Habits: An Easy and Proven Way to Build Good Habits",
+      "description": "A practical guide to breaking bad habits and building good ones through small, incremental changes.",
+      "price_text": "£16.99",
+      "availability_text": "In stock (35 available)"
+    },
+    "expected_category": "self-help",
+    "note": "Clear self-help — habit-building guide"
+  }
+]
